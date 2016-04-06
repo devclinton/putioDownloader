@@ -11,11 +11,11 @@ Requires Python3
 
 `git clone git@github.com:oudenmallon/putioDownloader.git`
 
-Run `pip install .`
+Run `pip3 install .`
 
 ### Configuring
 
-You need to create a **config/config.yml** file. See config.yml.example for an example config
+You need to create a **config/config.yml** file. See [config.yml.example](https://github.com/oudenmallon/putioDownloader/blob/master/config/config.yml.example)  for an example config
 
 #### Configuration Options
 
