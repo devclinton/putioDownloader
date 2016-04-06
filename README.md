@@ -13,7 +13,7 @@ Run `pip install .`
 
 ### Configuring
 
-You need to create a **config.yml** file. See config.yml.example for an example config
+You need to create a **config/config.yml** file. See config.yml.example for an example config
 
 #### Configuration Options
 

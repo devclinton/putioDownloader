@@ -12,6 +12,7 @@ import threading
 import time
 import yaml
 import tempfile
+import fileinput
 from datetime import datetime
 
 logging.basicConfig(level=logging.DEBUG)
@@ -61,7 +62,7 @@ class PutIoAPI:
                 method, url, params=params, data=data, files=files,
                 headers=headers, allow_redirects=True, stream=stream)
         except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout) as e:
-            raise Exception('Problem connection to server %s'.format(e))
+            raise Exception('Problem connection to server {}'.format(e))
 
         try:
             response = json.loads(response.content.decode('utf-8'))
@@ -77,7 +78,7 @@ class PutIoAPI:
         try:
             l = self.request('/files/list', params={'parent_id': parent_id})
         except e:
-            logger.debug("Error Getting file list: %s".format(s))
+            logger.debug("Error Getting file list: {}".format(s))
             return []
         files = l['files']
         return files
@@ -102,7 +103,7 @@ class PutIoAPI:
                 org = {}
                 org['file'] = file
                 org['parent_path'] = parent_path
-                if config["downloadPlaylist"]:
+                if config["downloadPlaylist"] and "video" in file['content_type']:
                     downloadItem = copy.deepcopy(org)
                     queue.put(downloadItem)
                 else:
@@ -139,7 +140,7 @@ class DownloadThread(threading.Thread):
     def assembleFile(self, info):
         parent_path = info['parent_path']
         file = info['file']
-        tmpName = [tempfile.gettempdir(), file['name']].join(os.pathsep)
+        tmpName = os.sep.join([tempfile.gettempdir(), file['name']])
 
         # check that all the parts are done
         total = 0
@@ -172,24 +173,26 @@ class DownloadThread(threading.Thread):
             if config["deleteAfterSync"]:
                 logger.info("Deleteing fie {} from put.io".format(file['name']))
                 self.pdm.delete(file)
-
+    def replaceInFile(self,file):
+        with fileinput.FileInput(file, inplace=True) as file:
+            for line in file:
+                print (line.replace('/v2/files', 'http://put.io/v2/files'))
     def downloadFile(self, info):
+        file = info['file']
+        mode = "wb"
         c = pycurl.Curl()
         c.setopt(c.FOLLOWLOCATION, True)
         parent_path = info['parent_path']
-        if config["downloadPlaylist"]:
-            logger.info("Downloading {} as a playlist".format(parent_path + file['name'], info['partId']))
-            c.setopt(c.URL,
-                     '%s/files/%s/hls/media.m3u8?oauth_token=%s'.format(config["baseUrl"], file['id'], pdm.access_token))
-            tmpName = [tempfile.gettempdir(), "%s.m3u8".format(file['name'], info['partId'])].join(os.pathsep)
+        if config["downloadPlaylist"] and "video" in file['content_type']:
+            logger.info("Downloading {} as a playlist".format(parent_path + file['name']))
+            logger.info('{}/files/{}/hls/media.m3u8?oauth_token={}'.format(config["baseUrl"], file['id'], pdm.access_token))
+            c.setopt(c.URL,'{}/files/{}/hls/media.m3u8?oauth_token={}'.format(config["baseUrl"], file['id'], pdm.access_token))
+            tmpName = os.sep.join([tempfile.gettempdir(), "{}.m3u8".format(file['name'])])
         else:
-
-            file = info['file']
             logger.info("Downloading {}, Part: {}".format(parent_path + file['name'], info['partId']))
-            tmpName = [tempfile.gettempdir(),"%s.part.%i" .format(file['name'],info['partId'])].join(os.pathsep)
+            tmpName = os.sep.join([tempfile.gettempdir(),"{}.part.{}" .format(file['name'],info['partId'])])
             c = pycurl.Curl()
-            c.setopt(c.URL,'%s/files/%s/download?oauth_token=%s'.format(config["baseUrl"], file['id'], pdm.access_token))
-            mode = "wb"
+            c.setopt(c.URL,'{}/files/{}/download?oauth_token={}'.format(config["baseUrl"], file['id'], pdm.access_token))
             logger.info("[{}] Range: {}-{}".format(tmpName, info['range_start'], info['range_end']))
             if os.path.exists(tmpName):
                 mode = "ab"
@@ -200,7 +203,8 @@ class DownloadThread(threading.Thread):
             c.setopt(c.WRITEDATA, f)
             c.perform()
             c.close()
-        if config["downloadPlaylist"]:
+        if config["downloadPlaylist"] and "video" in file['content_type']:
+            self.replaceInFile(tmpName)
             shutil.move(tmpName, parent_path + file['name'] + ".m3u8")
         else:
             self.assembleFile(info)

@@ -1,0 +1,4 @@
+syncDir: /downloads
+token: 1234567
+deleteAfterSync: False
+downloadPlaylist: True
