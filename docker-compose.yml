@@ -1,0 +1,9 @@
+version: '2'
+services:
+  putio-sync:
+    image: devclinton/putio-sync
+    container_name: putioSync
+    build: .
+    volumes:
+     - ${DOWNLOAD_DIR}:/downloads
+     - ${CONFIG_DIR}:/opt/putioSync/config
