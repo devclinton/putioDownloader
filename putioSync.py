@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import humanfriendly
 import copy
 import json
 import logging
@@ -29,8 +30,8 @@ with open("config/config.yml", 'r') as stream:
 
 config["baseUrl"] = config["baseUrl"] if "baseUrl" in config else 'https://api.put.io/v2'
 config["deleteAfterSync"] = config["deleteAfterSync"] if "deleteAfterSync" in config else True
-config["minPartSize"] = config["minPartSize"] if "minPartSize" in config else 64 * MB
-config["maxPartSize"] = config["maxPartSize"] if "maxPartSize" in config else 256 * MB
+config["minPartSize"] = humanfriendly.parse_size(config["minPartSize"]) if "minPartSize" in config else 64 * MB
+config["maxPartSize"] = humanfriendly.parse_size(config["maxPartSize"]) if "maxPartSize" in config else 256 * MB
 config["downloadPlaylist"] = config["downloadPlaylist"] if "downloadPlaylist" in config else False
 config["downloadThreads"] = config["downloadThreads"] if "downloadThreads" in config else 10
 

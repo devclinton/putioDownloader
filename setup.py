@@ -12,6 +12,7 @@ setup(
     install_requires=[
         'pycurl',
         'pyyaml',
-        'requests'
+        'requests',
+        'humanfriendly'
     ],
 )
