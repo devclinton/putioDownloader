@@ -3,6 +3,8 @@ putioDownloader
 
 This project can be used to download files from put.io to a local machine. The download is split into parts.
 
+Requires Python3
+
 ===
 
 ### Installation
@@ -26,4 +28,4 @@ You need to create a **config/config.yml** file. See config.yml.example for an e
 
 ### Running
 
-`python putioSync.py`
+`python3 putioSync.py`

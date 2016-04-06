@@ -176,7 +176,7 @@ class DownloadThread(threading.Thread):
     def replaceInFile(self,file):
         with fileinput.FileInput(file, inplace=True) as file:
             for line in file:
-                print (line.replace('/v2/files', 'http://put.io/v2/files'))
+                print(line.replace('/v2/files', 'http://put.io/v2/files'), end='')
     def downloadFile(self, info):
         file = info['file']
         mode = "wb"
