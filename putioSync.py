@@ -32,6 +32,7 @@ config["deleteAfterSync"] = config["deleteAfterSync"] if "deleteAfterSync" in co
 config["minPartSize"] = config["minPartSize"] if "minPartSize" in config else 64 * MB
 config["maxPartSize"] = config["maxPartSize"] if "maxPartSize" in config else 256 * MB
 config["downloadPlaylist"] = config["downloadPlaylist"] if "downloadPlaylist" in config else False
+config["downloadThreads"] = config["downloadThreads"] if "downloadThreads" in config else 10
 
 if "syncDir" not in config:
     raise Exception('No syncDir specified in config')
@@ -231,7 +232,7 @@ def syncIt():
 queue = queue.Queue()
 pdm = PutIoAPI()
 
-for i in range(10):
+for i in range(config["downloadThreads"]):
     t = DownloadThread(queue, pdm)
     t.setDaemon(True)
     t.start()
