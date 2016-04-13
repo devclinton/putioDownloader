@@ -243,3 +243,13 @@ a {
 @media screen and (max-width: 42em) {
   .site-footer {
     font-size: 0.9rem; } }
+
+.hidden {
+   display: none;
+}
+
+#access_token {
+  font-size: 40px;
+  background: #ddd;
+  border: 1px solid black;
+}
