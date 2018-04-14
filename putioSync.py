@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-import humanfriendly
 import copy
 import json
 import logging
@@ -7,14 +6,15 @@ import math
 import os
 import pycurl
 import queue
-import requests
 import shutil
 import threading
 import time
-import yaml
-import tempfile
-import fileinput
 from datetime import datetime
+
+import requests
+import yaml
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers.polling import PollingObserver
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('putioSync')
@@ -30,11 +30,8 @@ with open("config/config.yml", 'r') as stream:
 
 config["baseUrl"] = config["baseUrl"] if "baseUrl" in config else 'https://api.put.io/v2'
 config["deleteAfterSync"] = config["deleteAfterSync"] if "deleteAfterSync" in config else True
-config["minPartSize"] = humanfriendly.parse_size(config["minPartSize"]) if "minPartSize" in config else 64 * MB
-config["maxPartSize"] = humanfriendly.parse_size(config["maxPartSize"]) if "maxPartSize" in config else 256 * MB
-config["downloadPlaylist"] = config["downloadPlaylist"] if "downloadPlaylist" in config else False
-config["downloadThreads"] = config["downloadThreads"] if "downloadThreads" in config else 10
-
+config["minPartSize"] = config["minPartSize"] if "minPartSize" in config else 64 * MB
+config["maxPartSize"] = config["maxPartSize"] if "maxPartSize" in config else 256 * MB
 if "syncDir" not in config:
     raise Exception('No syncDir specified in config')
 complete = {}
@@ -42,6 +39,9 @@ complete = {}
 if config["syncDir"][-1] != "/":
     config["syncDir"] += "/"
 
+
+def ascii_string(str):
+    return str.encode('ascii', 'ignore').decode('ascii')
 
 class PutIoAPI:
     def __init__(self):
@@ -64,7 +64,7 @@ class PutIoAPI:
                 method, url, params=params, data=data, files=files,
                 headers=headers, allow_redirects=True, stream=stream)
         except (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout) as e:
-            raise Exception('Problem connection to server {}'.format(e))
+            raise Exception('Problem connection to server %s'.format(e))
 
         try:
             response = json.loads(response.content.decode('utf-8'))
@@ -76,17 +76,39 @@ class PutIoAPI:
 
         return response
 
+    def upload_magnet(self, file):
+        link = open(file, 'r').read().strip()
+        try:
+            logger.info('Uploading {}'.format(file))
+            l = self.request('/transfers/add', method='POST', data={'url': link})
+        except Exception as e:
+            logger.debug("Error Uploading the torrent file: %s".format(e))
+            return False
+        logger.info('Torrent Uploaded')
+        return True
+
+    def upload(self, file):
+        try:
+            logger.info('Uploading {}'.format(file))
+            files = {'file': open(file, 'rb')}
+            l = self.request('/files/upload', method='POST', files=files)
+        except Exception as e:
+            logger.debug("Error Uploading the torrent file: %s".format(e))
+            return False
+        logger.info('Torrent Uploaded')
+        return True
+
     def list(self, parent_id=0):
         try:
             l = self.request('/files/list', params={'parent_id': parent_id})
-        except e:
-            logger.debug("Error Getting file list: {}".format(s))
+        except Exception as e:
+            logger.debug("Error Getting file list: %s".format(e))
             return []
         files = l['files']
         return files
 
     def delete(self, file):
-        logger.info("Deleting File with: {}".format(file['name']))
+        logger.info("Deleting File with: {}".format(ascii_string(file['name'])))
         result = self.request('/files/delete', 'POST', data={'file_ids': file['id']})
         logger.debug("Delete result: {}".format(result))
 
@@ -94,44 +116,44 @@ class PutIoAPI:
         files = self.list(parent)
         params = {}
         params['oauth_token'] = self.access_token
+        parent_path = ascii_string(parent_path)
+
 
         for file in files:
             if file['content_type'] == 'application/x-directory':
-                if not os.path.exists(parent_path + file['name']):
-                    os.makedirs(parent_path + file['name'])
-                if self.sync(file['id'], parent_path + file['name'] + "/") == 0:  # delete empty folders
+                if not os.path.exists(parent_path + ascii_string(file['name'])):
+                    os.makedirs(parent_path + ascii_string(file['name']))
+                if self.sync(file['id'], parent_path + ascii_string(file['name']) + "/") == 0:  # delete empty folders
                     self.delete(file)
             else:
                 org = {}
                 org['file'] = file
                 org['parent_path'] = parent_path
-                if config["downloadPlaylist"] and "video" in file['content_type']:
-                    downloadItem = copy.deepcopy(org)
-                    queue.put(downloadItem)
-                else:
-                    partSize = file['size'] / 5
-                    if partSize > config["maxPartSize"]:
-                        partSize = config["maxPartSize"]
-                    elif partSize < config["minPartSize"]:
-                        partSize = config["minPartSize"]
+                partSize = round(file['size'] / 5)
+                if partSize > config["maxPartSize"]:
+                    partSize = config["maxPartSize"]
+                elif partSize < config["minPartSize"]:
+                    partSize = config["minPartSize"]
 
-                    if not file['id'] in complete.keys():
-                        complete[file['id']] = {'parts': int(math.ceil(file['size'] / partSize)), 'started': datetime.now()}
-                        total = 0
-                        partId = 0
-                        while total < file['size']:
-                            downloadItem = copy.deepcopy(org)
-                            downloadItem['partId'] = copy.copy(partId)
-                            partId += 1
-                            downloadItem['range_start'] = total + 1 if total > 0 else 0
-                            downloadItem['range_end'] = file['size'] if total + partSize >= file[
-                                'size'] else total + partSize
-                            total += partSize
-                            queue.put(downloadItem)
-                        complete[file['id']]['parts'] = copy.copy(partId)
+                if not file['id'] in complete.keys():
+                    complete[file['id']] = {'parts': int(math.ceil(file['size'] / partSize)), 'started': datetime.now()}
+                    total = 0
+                    partId = 0
+                    while total < file['size']:
+                        downloadItem = copy.deepcopy(org)
+                        downloadItem['partId'] = copy.copy(partId)
+                        partId += 1
+                        downloadItem['range_start'] = total + 1 if total > 0 else 0
+                        downloadItem['range_end'] = file['size'] if total + partSize >= file[
+                            'size'] else total + partSize
+                        total += partSize
+                        queue.put(downloadItem)
+                    complete[file['id']]['parts'] = copy.copy(partId)
 
         return len(files)
 
+
+pdm = PutIoAPI()
 
 class DownloadThread(threading.Thread):
     def __init__(self, queue, pdm):
@@ -140,16 +162,16 @@ class DownloadThread(threading.Thread):
         self.pdm = pdm
 
     def assembleFile(self, info):
-        parent_path = info['parent_path']
+        parent_path = ascii_string(info['parent_path'])
         file = info['file']
-        tmpName = os.sep.join([tempfile.gettempdir(), file['name']])
+        tmpName = "/tmp/" + ascii_string(file['name'])
 
         # check that all the parts are done
         total = 0
 
         logger.debug(complete[file['id']])
 
-        logger.debug("Checking for parts of file {}".format(file['name']))
+        logger.debug("Checking for parts of file {}".format(ascii_string(file['name'])))
         for i in range(complete[file['id']]['parts']):
             partName = tmpName + ".part.%i" % i
             if os.path.exists(partName):
@@ -159,7 +181,7 @@ class DownloadThread(threading.Thread):
             ended = datetime.now()
             totalTime = ended - complete[file['id']]['started']
             logger.info("Download Time: {}".format(totalTime.total_seconds()))
-            logger.info("Assembing {}".format(file['name']))
+            logger.info("Assembing {}".format(ascii_string(file['name'])))
             with open(tmpName, 'wb') as f:
                 for i in range(complete[file['id']]['parts']):
                     partName = tmpName + ".part.%i" % i
@@ -167,49 +189,35 @@ class DownloadThread(threading.Thread):
                     with open(partName, 'rb') as sf:
                         f.write(sf.read())
                     os.remove(partName)
-            logger.info("Moving file {} to {}".format(file['name'], config["syncDir"]))
+            logger.info("Moving file {} to {}".format(ascii_string(file['name']), config["syncDir"]))
             if not os.path.exists(parent_path):
                 os.makedirs(parent_path)
-            shutil.move(tmpName, parent_path + file['name'])
+            shutil.move(tmpName, parent_path + ascii_string(file['name']))
             del complete[file['id']]
             if config["deleteAfterSync"]:
-                logger.info("Deleteing fie {} from put.io".format(file['name']))
+                logger.info("Deleteing fie {} from put.io".format(ascii_string(file['name'])))
                 self.pdm.delete(file)
-    def replaceInFile(self,file):
-        with fileinput.FileInput(file, inplace=True) as file:
-            for line in file:
-                print(line.replace('/v2/files', 'http://put.io/v2/files'), end='')
+
     def downloadFile(self, info):
-        file = info['file']
-        mode = "wb"
-        c = pycurl.Curl()
-        c.setopt(c.FOLLOWLOCATION, True)
         parent_path = info['parent_path']
-        if config["downloadPlaylist"] and "video" in file['content_type']:
-            logger.info("Downloading {} as a playlist".format(parent_path + file['name']))
-            logger.info('{}/files/{}/hls/media.m3u8?oauth_token={}'.format(config["baseUrl"], file['id'], pdm.access_token))
-            c.setopt(c.URL,'{}/files/{}/hls/media.m3u8?oauth_token={}'.format(config["baseUrl"], file['id'], pdm.access_token))
-            tmpName = os.sep.join([tempfile.gettempdir(), "{}.m3u8".format(file['name'])])
-        else:
-            logger.info("Downloading {}, Part: {}".format(parent_path + file['name'], info['partId']))
-            tmpName = os.sep.join([tempfile.gettempdir(),"{}.part.{}" .format(file['name'],info['partId'])])
-            c = pycurl.Curl()
-            c.setopt(c.URL,'{}/files/{}/download?oauth_token={}'.format(config["baseUrl"], file['id'], pdm.access_token))
-            logger.info("[{}] Range: {}-{}".format(tmpName, info['range_start'], info['range_end']))
-            if os.path.exists(tmpName):
-                mode = "ab"
-                info['range_start'] += os.path.getsize(tmpName)
-                logger.info("[{}] Adjusted Range: {}-{}".format(tmpName, info['range_start'], info['range_end']))
-            c.setopt(pycurl.RANGE, "%i-%i" % (info['range_start'], info['range_end']))
+        file = info['file']
+        logger.info("Downloading {}, Part: {}".format(parent_path + file['name'], info['partId']))
+        tmpName = "/tmp/" + ascii_string(file['name']) + ".part.%i" % info['partId']
+        c = pycurl.Curl()
+        c.setopt(c.URL, config["baseUrl"] + '/files/%s/download?oauth_token=%s' % (file['id'], pdm.access_token))
+        mode = "wb"
+        logger.info("[{}] Range: {}-{}".format(tmpName, info['range_start'], info['range_end']))
+        if os.path.exists(tmpName):
+            mode = "ab"
+            info['range_start'] += os.path.getsize(tmpName)
+            logger.info("[{}] Adjusted Range: {}-{}".format(tmpName, info['range_start'], info['range_end']))
+        c.setopt(pycurl.RANGE, "%i-%i" % (info['range_start'], info['range_end']))
+        c.setopt(c.FOLLOWLOCATION, True)
         with open(tmpName, mode) as f:
             c.setopt(c.WRITEDATA, f)
             c.perform()
             c.close()
-        if config["downloadPlaylist"] and "video" in file['content_type']:
-            self.replaceInFile(tmpName)
-            shutil.move(tmpName, parent_path + file['name'] + ".m3u8")
-        else:
-            self.assembleFile(info)
+        self.assembleFile(info)
 
     def run(self):
         while True:
@@ -224,6 +232,37 @@ class DownloadThread(threading.Thread):
             time.sleep(1)
 
 
+uploaded = []
+class TorrentFileEventHandler(FileSystemEventHandler):
+
+    def process_new_event(self, event):
+        logger.info("New Event: {}".format(event.src_path))
+        time.sleep(5)
+        if not event.is_directory:
+            logger.info("Checking if {} is a download".format(event.src_path))
+            if event.src_path not in uploaded:
+                if (event.src_path.endswith(".magnet") and pdm.upload_magnet(event.src_path)) or (
+                        event.src_path.endswith(".torrent") and pdm.upload(event.src_path)):
+                    os.remove(event.src_path)
+                    uploaded.append(event.src_path)
+
+    def on_created(self, event):
+        self.process_new_event(event)
+
+    def on_modified(self, event):
+        self.process_new_event(event)
+
+
+for dirpath, dnames, fnames in os.walk(config['blackholeDir']):
+    for f in fnames:
+        full_name = os.path.join(dirpath, f)
+        if (full_name.endswith(".magnet") and pdm.upload_magnet(full_name)) or (full_name.endswith(".torrent") and pdm.upload(full_name)):
+            os.remove(full_name)
+
+observer = PollingObserver(timeout=60)
+observer.schedule(TorrentFileEventHandler(), config['blackholeDir'], recursive=True)
+observer.start()
+
 def syncIt():
     pdm.sync()
     # queue.join() #wait on initial set to sync before starting over
@@ -231,9 +270,8 @@ def syncIt():
 
 
 queue = queue.Queue()
-pdm = PutIoAPI()
 
-for i in range(config["downloadThreads"]):
+for i in range(10):
     t = DownloadThread(queue, pdm)
     t.setDaemon(True)
     t.start()

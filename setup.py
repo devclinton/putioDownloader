@@ -13,6 +13,7 @@ setup(
         'pycurl',
         'pyyaml',
         'requests',
-        'humanfriendly'
+        'humanfriendly',
+        'watchdog'
     ],
 )
